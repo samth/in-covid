@@ -55,7 +55,9 @@
         [else (number->string (lookup-county-code d*))]))
   
 
-(define (do-graph d* #:margin [margin 20] #:legend [legend 'top-right] #:title [title "~a"] #:adjust [f values] fields)
+(define (do-graph d* fields
+                  #:margin [margin 20] #:legend [legend 'top-right] #:title [title "~a"] #:adjust [f values]
+                  #:y-transform [yt #f])
   (define d (->district d*))
   (define p (apply
              graph
@@ -70,6 +72,7 @@
              #:legend-anchor legend
              #:x-label "Date"
              #:y-label ""
+             #:y-transform yt
              (for/list ([(field* i) (in-indexed fields)])
                (define-values (field label)
                  (match field*
@@ -95,7 +98,7 @@
         [(< d* 20) (format "District ~a" d)]
         [else (lookup-county-name d*)]))
 
-(define (hospital-district d*)
+(define (hospital-district [d* #f])
   (do-graph d*
             #:title "Hospitalization, ~a"
             #:legend 'top-left
@@ -104,7 +107,28 @@
                   (list "hospital-pui" "COVID PUI Hospitalizations"))))
 
 (define (admissions-district [d* #f])
-  (do-graph d* #:title "Hospital Admissions, ~a" (list "admissions")))
+  (do-graph d*
+            #:legend 'top-left
+            #:adjust (λ (df) (~> df
+                                 (create [admissions-avg-7 ([admissions : vector]) (moving-average admissions)])))
+            #:title "Hospital Admissions, ~a" (list  (list "admissions-avg-7" "7-day moving average"))))
+(require math/statistics)
+(define (moving-average v [k 7])
+  (for/vector #:length (vector-length v)
+    ([i (in-range (vector-length v))])
+    (mean (vector-copy v (max 0 (- i k)) i))))
+
+(define (cases-district [d* #f] #:log? [log? #f])
+  (do-graph d*
+            #:title "COVID Cases, ~a" (list (list "cases-avg-7" "7-day moving average")
+                                            #;(list "cases" "Daily Cases")
+                                            #;(list "cases-avg-14" "14-day moving average"))
+            #:legend 'top-left
+            #:y-transform (if log? logarithmic-transform #f)
+            #:adjust (λ (df) (~> df
+                                 (create [cases-avg-7 ([cases : vector]) (moving-average cases)]
+                                         [cases-avg-14 ([cases : vector]) (moving-average cases 14)])
+                                 (create [cases-avg-7 (cases-avg-7) (max cases-avg-7 1)])))))
 
 (define (lookup-county-code pat)
   (for/first ([(f n) (in-data-frame (force fips-codes) "fips" "name")]
