@@ -1,13 +1,13 @@
 #lang racket
 
 (require sawzall data-frame json graphite racket/runtime-path net/http-easy)
-(require pict)
-(require (only-in plot date-ticks) gregor threading)
+(require pict (for-syntax racket/syntax))
+(require (only-in plot date-ticks make-axis-transform invertible-function log-ticks) gregor threading)
 
 (define-runtime-path here ".")
 (define fips-codes (delay (~> (df-read/csv (build-path here "state_and_county_fips_master.csv"))
                               (where (state) (equal? state "IN")))))
-
+(define safe-log-transform (transform (make-axis-transform (invertible-function log* exp)) (log-ticks #:scientific? #f)))
 (define-runtime-path json-path "covid-19-indiana-universal-report-current-public.json")
 
 (define (update-data!)
@@ -27,9 +27,11 @@
 
 (define data (delay (hash-ref* v 'metrics 'data)))
 
+
+(define ((date-before? k) d) (date<=? (iso8601->date d) (-days (today) k)))
 (define iso8601->posix (compose ->posix iso8601->date))
 (define-syntax-rule (extract [fields keys] ...)
-  (for/data-frame (fields ...) ([fields (hash-ref* data 'keys)] ...) (values fields ...)))
+  (for/data-frame (fields ...) ([i (in-naturals)] [fields (hash-ref* data 'keys)] ...) (values fields ...)))
 
 (define df
   (delay
@@ -57,12 +59,19 @@
 
 (define (do-graph d* fields
                   #:margin [margin 20] #:legend [legend 'top-right] #:title [title "~a"] #:adjust [f values]
-                  #:y-transform [yt #f])
+                  #:y-transform [yt #f]
+                  #:log? [log? #f]
+                  #:embargo [embargo 0])
+  (define embargoed?
+    (if (zero? embargo)
+        (λ (x) #t)
+        (date-before? embargo)))
   (define d (->district d*))
   (define p (apply
              graph
              #:data (f (~> (force df)
-                           (where (district) (and (equal? district d)))))
+                           (where (district) (and (equal? district d)))
+                           (where (date) (embargoed? date))))
              #:x-transform (only-ticks (date-ticks))
              #:x-conv iso8601->posix
              #:mapping (aes #:x "date")
@@ -70,9 +79,9 @@
              (format title (district->name d))
              #:width 800
              #:legend-anchor legend
-             #:x-label "Date"
+             #:x-label ""
              #:y-label ""
-             #:y-transform yt
+             #:y-transform (if log? safe-log-transform #f)
              (for/list ([(field* i) (in-indexed fields)])
                (define-values (field label)
                  (match field*
@@ -102,33 +111,44 @@
   (do-graph d*
             #:title "Hospitalization, ~a"
             #:legend 'top-left
-            #:adjust (λ (df) (~> df (where (hospital-beds) (> hospital-beds 0))))
+            #:adjust (λ (df) (~> df
+                                 
+                                 (where (hospital-beds) (> hospital-beds 0))))
             (list (list "hospital-beds" "All COVID Hospitalizations")
                   (list "hospital-pui" "COVID PUI Hospitalizations"))))
 
 (define (admissions-district [d* #f])
   (do-graph d*
+            #:embargo 6
             #:legend 'top-left
-            #:adjust (λ (df) (~> df
-                                 (create [admissions-avg-7 ([admissions : vector]) (moving-average admissions)])))
-            #:title "Hospital Admissions, ~a" (list  (list "admissions-avg-7" "7-day moving average"))))
+            #:adjust (add-avg admissions)
+            #:title "Hospital Admissions, ~a" (list  "admissions" (list "admissions-avg-7" "7-day moving average"))))
 (require math/statistics)
 (define (moving-average v [k 7])
   (for/vector #:length (vector-length v)
     ([i (in-range (vector-length v))])
     (mean (vector-copy v (max 0 (- i k)) i))))
 
-(define (cases-district [d* #f] #:log? [log? #f])
+(define (log* f)
+  (if (= f 0) 0 (log f)))
+
+(define-syntax (add-avg stx)
+  (syntax-case stx ()
+    [(_ col) #'(λ (df) (add-avg df col))]
+    [(_ df col)
+     #`(create df
+               [#,(format-id #'col "~a-avg-7" #'col) ([col : vector]) (moving-average col)])]))
+
+(define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t])
   (do-graph d*
-            #:title "COVID Cases, ~a" (list (list "cases-avg-7" "7-day moving average")
-                                            #;(list "cases" "Daily Cases")
-                                            #;(list "cases-avg-14" "14-day moving average"))
+            `(,(list "cases-avg-7" "7-day moving average")
+              ,@(if daily? (list (list "cases" "Daily Cases")) null))
+            #:embargo 4
+            #:title "COVID Cases, ~a"
             #:legend 'top-left
-            #:y-transform (if log? logarithmic-transform #f)
+            #:y-transform (if log? safe-log-transform #f)
             #:adjust (λ (df) (~> df
-                                 (create [cases-avg-7 ([cases : vector]) (moving-average cases)]
-                                         [cases-avg-14 ([cases : vector]) (moving-average cases 14)])
-                                 (create [cases-avg-7 (cases-avg-7) (max cases-avg-7 1)])))))
+                                 (add-avg cases)))))
 
 (define (lookup-county-code pat)
   (for/first ([(f n) (in-data-frame (force fips-codes) "fips" "name")]
