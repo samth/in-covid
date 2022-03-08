@@ -7,8 +7,11 @@
 (define-runtime-path here ".")
 (define fips-codes (delay (~> (df-read/csv (build-path here "state_and_county_fips_master.csv"))
                               (where (state) (equal? state "IN")))))
+(define (log* f)
+  (if (or (= f 0) (< (log f) 0)) 0 (log f)))
 (define safe-log-transform (transform (make-axis-transform (invertible-function log* exp)) (log-ticks #:scientific? #f)))
 (define-runtime-path json-path "covid-19-indiana-universal-report-current-public.json")
+
 
 (define (update-data!)
   (define r (get "https://www.coronavirus.in.gov/map/covid-19-indiana-universal-report-current-public.json" #:stream? #t))
@@ -81,6 +84,7 @@
              #:legend-anchor legend
              #:x-label ""
              #:y-label ""
+             ;#:y-min 0
              #:y-transform (if log? safe-log-transform #f)
              (for/list ([(field* i) (in-indexed fields)])
                (define-values (field label)
@@ -90,9 +94,10 @@
                (lines #:color (+ 1 i) #:mapping (aes #:y field) #:label label))))
   (add-margin margin p))
 
-(define (icu-district [d* #f])
+(define (icu-district [d* #f] #:log? [log? #f])
   (do-graph d*
             #:title "ICU occupancy, ~a"
+            #:log? log?
             #:adjust (λ (df)
                        (~> df
                            (where (icu-supply) (>= icu-supply 1))
@@ -107,48 +112,45 @@
         [(< d* 20) (format "District ~a" d)]
         [else (lookup-county-name d*)]))
 
-(define (hospital-district [d* #f])
+(define (hospital-district [d* #f] #:log? [log? #f])
   (do-graph d*
+            #:log? log?
             #:title "Hospitalization, ~a"
             #:legend 'top-left
-            #:adjust (λ (df) (~> df
-                                 
-                                 (where (hospital-beds) (> hospital-beds 0))))
+            #:adjust (λ (df) (~> df (where (hospital-beds) (> hospital-beds 0))))
             (list (list "hospital-beds" "All COVID Hospitalizations")
                   (list "hospital-pui" "COVID PUI Hospitalizations"))))
 
-(define (admissions-district [d* #f])
+(define (admissions-district [d* #f] #:daily? [daily? #t])
   (do-graph d*
             #:embargo 6
             #:legend 'top-left
             #:adjust (add-avg admissions)
-            #:title "Hospital Admissions, ~a" (list  "admissions" (list "admissions-avg-7" "7-day moving average"))))
+            #:title "Hospital Admissions, ~a" `(  ,@(if daily? (list "admissions") null) ("admissions-avg-7" "7-day moving average"))))
 (require math/statistics)
 (define (moving-average v [k 7])
   (for/vector #:length (vector-length v)
     ([i (in-range (vector-length v))])
     (mean (vector-copy v (max 0 (- i k)) i))))
 
-(define (log* f)
-  (if (= f 0) 0 (log f)))
+
 
 (define-syntax (add-avg stx)
   (syntax-case stx ()
-    [(_ col) #'(λ (df) (add-avg df col))]
+    [(_ col) #'(λ (d) (add-avg d col))]
     [(_ df col)
      #`(create df
                [#,(format-id #'col "~a-avg-7" #'col) ([col : vector]) (moving-average col)])]))
-
+(define cases-embargo (make-parameter 4))
 (define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t])
   (do-graph d*
             `(,(list "cases-avg-7" "7-day moving average")
               ,@(if daily? (list (list "cases" "Daily Cases")) null))
-            #:embargo 4
+            #:embargo (cases-embargo)
             #:title "COVID Cases, ~a"
             #:legend 'top-left
-            #:y-transform (if log? safe-log-transform #f)
-            #:adjust (λ (df) (~> df
-                                 (add-avg cases)))))
+            #:log? log?
+            #:adjust (λ (df) (~> df (add-avg cases)))))
 
 (define (lookup-county-code pat)
   (for/first ([(f n) (in-data-frame (force fips-codes) "fips" "name")]
