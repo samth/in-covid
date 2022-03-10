@@ -124,7 +124,7 @@
         [else (lookup-county-name d*)]))
 
 (define (district-population d)
-  (let ([d (if (string? d) (lookup-county-code d) d)])
+  (let ([d (if (string? d) (lookup-county-code d) (if d d 0))])
     (cond [(= 0 d) (lookup-pop 18000)]
           [(< d 20) 1]
           [else (lookup-pop d)])))
