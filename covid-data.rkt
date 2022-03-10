@@ -55,6 +55,7 @@
 
 (define (->district d*)
   (cond [(not d*) "0"]
+        [(list? d*) d*]
         [(number? d*) (number->string d*)]
         [(string->number d*) d*]
         [else (number->string (lookup-county-code d*))]))
@@ -64,6 +65,7 @@
                   #:margin [margin 20] #:legend [legend 'top-right] #:title [title "~a"] #:adjust [f values]
                   #:y-transform [yt #f]
                   #:log? [log? #f]
+                  #:after [after "2020-03-20"]
                   #:embargo [embargo 0])
   (define embargoed?
     (if (zero? embargo)
@@ -73,15 +75,21 @@
   (define p (apply
              graph
              #:data (f (~> (force df)
-                           (where (district) (and (equal? district d)))
+                           (where (district) (and (if (list? d)
+                                                      (member district d)
+                                                      (equal? district d))))
+                           (where (date) (> (iso8601->posix date) (iso8601->posix after)))
                            (where (date) (embargoed? date))))
              #:x-transform (only-ticks (date-ticks))
              #:x-conv iso8601->posix
-             #:mapping (aes #:x "date")
+             #:mapping (aes #:x "date" #:facet (if (list? d) "district" #f))
              #:title
-             (format title (district->name d))
-             #:width 800
+             (string-append (format title (if (list? d) "" (district->name d)))
+                            (if log? " (log scale)" ""))
+             #:width 1000
+             #:height 400
              #:legend-anchor legend
+             
              #:x-label ""
              #:y-label ""
              ;#:y-min 0
@@ -142,7 +150,7 @@
      #`(create df
                [#,(format-id #'col "~a-avg-7" #'col) ([col : vector]) (moving-average col)])]))
 (define cases-embargo (make-parameter 4))
-(define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t])
+(define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t] #:after [after "2020-01-01"])
   (do-graph d*
             `(,(list "cases-avg-7" "7-day moving average")
               ,@(if daily? (list (list "cases" "Daily Cases")) null))
@@ -150,6 +158,7 @@
             #:title "COVID Cases, ~a"
             #:legend 'top-left
             #:log? log?
+            #:after after
             #:adjust (λ (df) (~> df (add-avg cases)))))
 
 (define (lookup-county-code pat)
@@ -166,16 +175,3 @@
 (define (add-margin n p)
   (define bg (filled-rectangle #:color "white" #:draw-border? #f (+ n (pict-width p)) (+ n (pict-height p))))
   (cc-superimpose bg p))
-
-(require simple-xlsx)
-
-(define (write-fips-xlsx path)
-  (let ([xlsx (new xlsx%)])
-    (send xlsx add-data-sheet
-          #:sheet_name "FIPS Codes"
-          #:sheet_data
-          (cons '("fips" "name" "state")
-                (for/list ([(f name state) (in-data-frame (force fips-codes) "fips" "name" "state")]) (list f name state))))
-    (write-xlsx-file xlsx path)))
-; use as 
-;(write-fips-xlsx "/home/samth/out.xlsx")
