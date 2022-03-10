@@ -5,8 +5,10 @@
 (require (only-in plot date-ticks make-axis-transform invertible-function log-ticks) gregor threading)
 
 (define-runtime-path here ".")
-(define fips-codes (delay (~> (df-read/csv (build-path here "state_and_county_fips_master.csv"))
-                              (where (state) (equal? state "IN")))))
+(define fips-codes (delay (~> (df-read/csv (build-path here "PL94_2010-20change_county.csv"))
+                              (create [fips (countyfips) (string->number (format "18~a" (~r #:pad-string "0" #:min-width 3 countyfips)))])
+                              (rename "areaname" "name")
+                              (create [population (totpop) (string->number (regexp-replace* "," totpop ""))]))))
 (define (log* f)
   (if (or (= f 0) (< (log f) 0)) 0 (log f)))
 (define safe-log-transform (transform (make-axis-transform (invertible-function log* exp)) (log-ticks #:scientific? #f)))
@@ -112,6 +114,7 @@
                            (create [total-icu (icu-covid icu-not-covid) (+ icu-covid icu-not-covid)])))
             '(("icu-covid"  "COVID ICU Patients")
               ("total-icu"  "Total ICU Patients")
+              ("icu-not-covid" "Non-COVID ICU Patients")
               ("icu-supply" "Total ICU Beds"))))
 
 (define (district->name d)
@@ -119,6 +122,12 @@
   (cond [(= 0 d*) "Indiana statewide"]
         [(< d* 20) (format "District ~a" d)]
         [else (lookup-county-name d*)]))
+
+(define (district-population d)
+  (let ([d (if (string? d) (lookup-county-code d) d)])
+    (cond [(= 0 d) (lookup-pop 18000)]
+          [(< d 20) 1]
+          [else (lookup-pop d)])))
 
 (define (hospital-district [d* #f] #:log? [log? #f])
   (do-graph d*
@@ -150,16 +159,18 @@
      #`(create df
                [#,(format-id #'col "~a-avg-7" #'col) ([col : vector]) (moving-average col)])]))
 (define cases-embargo (make-parameter 4))
-(define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t] #:after [after "2020-01-01"])
+(define (cases-district [d* #f] #:log? [log? #f] #:daily? [daily? #t] #:per? [per? #f] #:after [after "2020-01-01"])
   (do-graph d*
-            `(,(list "cases-avg-7" "7-day moving average")
+            `(,(if per? (list "cases-per-cap-avg-7" "7-day moving average") (list "cases-avg-7" "7-day moving average"))
               ,@(if daily? (list (list "cases" "Daily Cases")) null))
             #:embargo (cases-embargo)
             #:title "COVID Cases, ~a"
             #:legend 'top-left
             #:log? log?
             #:after after
-            #:adjust (λ (df) (~> df (add-avg cases)))))
+            #:adjust (λ (df) (~> df
+                                 (add-avg cases)
+                                 (create [cases-per-cap-avg-7 (cases-avg-7) (* 100000 (/ cases-avg-7 (district-population d*)))])))))
 
 (define (lookup-county-code pat)
   (for/first ([(f n) (in-data-frame (force fips-codes) "fips" "name")]
@@ -168,6 +179,12 @@
 
 (define (lookup-county-name n)
   (for/first ([(f name) (in-data-frame (force fips-codes) "fips" "name")]
+              #:when (= n f))
+    name))
+
+
+(define (lookup-pop n)
+  (for/first ([(f name) (in-data-frame (force fips-codes) "fips" "population")]
               #:when (= n f))
     name))
 
