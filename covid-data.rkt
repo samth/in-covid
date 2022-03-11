@@ -164,7 +164,7 @@
             `(,(if per? (list "cases-per-cap-avg-7" "7-day moving average") (list "cases-avg-7" "7-day moving average"))
               ,@(if daily? (list (list "cases" "Daily Cases")) null))
             #:embargo (cases-embargo)
-            #:title "COVID Cases, ~a"
+            #:title (~a "COVID Cases" (if per? " per 100k" "") ", ~a")
             #:legend 'top-left
             #:log? log?
             #:after after
