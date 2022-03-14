@@ -1,4 +1,8 @@
 #lang info
 
 (define collection "in-covid")
-(define deps '("plot" "sawzall" "graphite" "gregor" "base"))
+(define deps '("data-frame"
+               "http-easy"
+               "math-lib"
+               "pict-lib"
+               "plot" "sawzall" "graphite" "gregor" "base" "fancy-app" "threading"))
