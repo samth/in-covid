@@ -37,4 +37,6 @@
 
 (module+ main
   (require racket/cmdline)
-  (command-line #:args (path) (save-pict (go) path)))
+  (command-line #:once-each ["--update" "update the data" (begin (update-data!) (printf "Wastewater data updated.\n") (exit 0))]
+                #:args (path)
+                (save-pict (go) path)))
