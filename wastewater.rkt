@@ -1,7 +1,8 @@
 #lang racket
 (require fancy-app)
 (require net/http-easy racket/runtime-path json sawzall graphite data-frame threading)
-(require (only-in plot date-ticks make-axis-transform invertible-function log-ticks) gregor)
+(require (only-in plot date-ticks make-axis-transform invertible-function log-ticks
+                  plot-x-tick-label-angle plot-x-tick-label-anchor) gregor)
 (define-runtime-path here ".")
 (define u "https://bloomington.data.socrata.com/api/views/yv82-z42g/rows.csv?accessType=DOWNLOAD")
 
@@ -22,11 +23,14 @@
 (define (log* f)
   (if (or (= f 0) (< (log f) 0)) 0 (log f)))
 (define safe-log-transform (transform (make-axis-transform (invertible-function log* exp)) (log-ticks #:scientific? #f)))
-(define (go)
+(define (go [start #f])
+
+  (plot-x-tick-label-angle 90)
+  (plot-x-tick-label-anchor 'top-right)
   (graph #:data d
          #:x-transform (only-ticks (date-ticks))
          #:x-conv date->posix
-         #:x-min (date->posix "09/30/2021 12:00:00 AM")
+         #:x-min (date->posix (if start (string-append start " 12:00:00 AM") "09/30/2021 12:00:00 AM"))
          #:y-transform safe-log-transform
          #:x-label ""
          #:y-label "Gene Copies (log scale)"
@@ -37,6 +41,9 @@
 
 (module+ main
   (require racket/cmdline)
-  (command-line #:once-each ["--update" "update the data" (begin (update-data!) (printf "Wastewater data updated.\n") (exit 0))]
+  (define d #f)
+  (command-line #:once-each
+                ["--update" "update the data" (begin (update-data!) (printf "Wastewater data updated.\n") (exit 0))]
+                ["--start" date "set start date DD/MM/YYY" (set! d date)]
                 #:args (path)
-                (save-pict (go) path)))
+                (save-pict (go d) path)))
